@@ -1,0 +1,6 @@
+{
+  "name": "Library Management System",
+  "description": "A simple application to manage library books.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
