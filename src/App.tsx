@@ -60,40 +60,59 @@ export default function App() {
       }
     });
 
+  const totalBooks = books.length;
+  const borrowedBooks = books.filter(b => b.isBorrowed).length;
+  const uniqueGenres = new Set(books.map(b => b.genre)).size;
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 p-8">
       <div className="max-w-3xl mx-auto">
         <header className="mb-10 text-center">
-          <h1 className="text-4xl font-extrabold tracking-tighter text-gray-900 mb-2">Library Catalogue</h1>
+          <h1 className="text-4xl font-extrabold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-500 mb-2">Library Catalogue</h1>
           <p className="text-gray-500">Manage and track your private collection with ease.</p>
         </header>
 
-        <form onSubmit={addBook} className="bg-white p-6 rounded-2xl shadow-xl shadow-gray-100 border border-gray-100 mb-8 flex gap-3">
+        <form onSubmit={addBook} className="bg-white p-6 rounded-2xl shadow-xl shadow-purple-100 border border-purple-50 mb-8 flex gap-3 transition-shadow duration-300">
           <input
             type="text"
             placeholder="Book Title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="flex-1 px-5 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-gray-200 outline-none"
+            className="flex-1 px-5 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-300 outline-none transition-all"
           />
           <input
             type="text"
             placeholder="Author"
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
-            className="flex-1 px-5 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-gray-200 outline-none"
+            className="flex-1 px-5 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-300 outline-none transition-all"
           />
           <input
             type="text"
             placeholder="Genre"
             value={genre}
             onChange={(e) => setGenre(e.target.value)}
-            className="flex-1 px-5 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-gray-200 outline-none"
+            className="flex-1 px-5 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-300 outline-none transition-all"
           />
-          <button type="submit" className="bg-gradient-to-br from-gray-900 to-gray-700 text-white px-8 py-3 rounded-xl font-medium flex items-center gap-2 hover:opacity-90 transition-opacity flex-shrink-0">
+          <button type="submit" className="bg-gradient-to-br from-purple-600 to-pink-500 text-white px-8 py-3 rounded-xl font-medium flex items-center gap-2 hover:from-purple-700 hover:to-pink-600 transition-all flex-shrink-0 shadow-lg shadow-purple-500/30">
             <Plus size={18} /> Add
           </button>
         </form>
+
+        <div className="grid grid-cols-3 gap-4 mb-8">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-50 hover:bg-gradient-to-br from-white to-purple-50 transition-colors text-center">
+            <p className="text-sm text-gray-500 mb-1">Total Books</p>
+            <p className="text-3xl font-bold text-gray-900">{totalBooks}</p>
+          </div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-50 hover:bg-gradient-to-br from-white to-amber-50 transition-colors text-center">
+            <p className="text-sm text-gray-500 mb-1">Borrowed</p>
+            <p className="text-3xl font-bold text-gray-900">{borrowedBooks}</p>
+          </div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-50 hover:bg-gradient-to-br from-white to-blue-50 transition-colors text-center">
+            <p className="text-sm text-gray-500 mb-1">Genres</p>
+            <p className="text-3xl font-bold text-gray-900">{uniqueGenres}</p>
+          </div>
+        </div>
 
         <div className="flex gap-4 mb-8">
           <input
@@ -101,12 +120,12 @@ export default function App() {
             placeholder="Search books..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="flex-1 px-5 py-3 border border-gray-200 rounded-full bg-white shadow-sm focus:ring-2 focus:ring-gray-200 outline-none"
+            className="flex-1 px-5 py-3 border border-gray-200 rounded-full bg-white shadow-sm focus:ring-2 focus:ring-purple-300 outline-none transition-all"
           />
           <select 
             value={sortOption} 
             onChange={(e) => setSortOption(e.target.value as SortOption)}
-            className="px-5 py-3 border border-gray-200 rounded-full bg-gradient-to-r from-white to-gray-50 shadow-sm focus:ring-2 focus:ring-gray-200 outline-none text-gray-700"
+            className="px-5 py-3 border border-gray-200 rounded-full bg-gradient-to-r from-white to-gray-50 shadow-sm focus:ring-2 focus:ring-purple-300 outline-none text-gray-700 transition-all cursor-pointer"
           >
             <option value="title-asc">Title (A-Z)</option>
             <option value="title-desc">Title (Z-A)</option>
@@ -128,7 +147,7 @@ export default function App() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   key={book.id} 
-                  className="p-4 flex items-center justify-between"
+                  className="p-4 flex items-center justify-between hover:bg-gradient-to-r hover:from-white hover:to-purple-50 transition-colors"
                 >
                   <div className="flex items-center gap-4">
                     <div className={`p-2 rounded-full ${book.isBorrowed ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
