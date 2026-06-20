@@ -4,25 +4,18 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import { Book, SortOption } from './types';
-import { Plus, Trash2, BookOpen, ArrowUp, Moon, Sun, Star, StarHalf, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, BookOpen, ArrowUp, Moon, Sun, Star, StarHalf, Download, Upload, LogIn, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from "motion/react";
+import { auth, db } from './lib/firebase';
+import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
+import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, updateDoc, Timestamp, orderBy } from 'firebase/firestore';
 
 export default function App() {
-  const [books, setBooks] = useState<Book[]>(() => {
-    const savedBooks = localStorage.getItem('books');
-    if (!savedBooks) return [];
-    try {
-      const parsed = JSON.parse(savedBooks);
-      return parsed.map((book: any) => ({
-        ...book,
-        tags: book.tags || [],
-        rating: book.rating || 0,
-      }));
-    } catch {
-      return [];
-    }
-  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
+  const [books, setBooks] = useState<Book[]>([]);
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('darkMode');
     return saved ? JSON.parse(saved) : false;
@@ -38,6 +31,7 @@ export default function App() {
   const [tagsInput, setTagsInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [filter, setFilter] = useState<'All' | 'Favorites' | 'Recently Added' | 'To Read'>('All');
   const [sortOption, setSortOption] = useState<SortOption>('title-asc');
   const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -46,8 +40,35 @@ export default function App() {
   const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
 
   useEffect(() => {
-    localStorage.setItem('books', JSON.stringify(books));
-  }, [books]);
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setBooks([]);
+      return;
+    }
+    const q = query(collection(db, 'books'), where('userId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetchedBooks: Book[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data() as Omit<Book, 'id'>,
+        createdAt: doc.data().createdAt.toDate(),
+      }));
+      setBooks(fetchedBooks);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   useEffect(() => {
     if (darkMode) {
@@ -69,16 +90,20 @@ export default function App() {
   const uniqueGenresList = Array.from(new Set(books.map(b => b.genre)));
   const uniqueTagsList = Array.from(new Set(books.flatMap(b => b.tags)));
 
-  const addBook = (e: React.FormEvent) => {
+  const addBook = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      setError('Please sign in to add books.');
+      return;
+    }
     if (!title || !author || !genre) {
       setError('Please fill in all required fields (Title, Author, Genre).');
       return;
     }
     setError(null);
 
-    const newBook: Book = {
-      id: crypto.randomUUID(),
+    const newBookData = {
+      userId: user.uid,
       title,
       author,
       genre,
@@ -89,18 +114,25 @@ export default function App() {
       isRead: false,
       rating: parseFloat(rating) || 0,
       tags: tagsInput.split(',').map(tag => tag.trim()).filter(tag => tag !== ''),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
     };
 
-    setBooks([...books, newBook]);
-    setTitle('');
-    setAuthor('');
-    setGenre('');
-    setPublicationYear('');
-    setDescription('');
-    setImage('');
-    setRating('');
-    setIsbn('');
-    setTagsInput('');
+    try {
+      await addDoc(collection(db, 'books'), newBookData);
+      setTitle('');
+      setAuthor('');
+      setGenre('');
+      setPublicationYear('');
+      setDescription('');
+      setImage('');
+      setRating('');
+      setIsbn('');
+      setTagsInput('');
+    } catch (error) {
+      setError("Failed to add book to collection.");
+      console.error(error);
+    }
   };
 
   const [isFetching, setIsFetching] = useState(false);
@@ -151,20 +183,18 @@ export default function App() {
     }
   };
 
-  const toggleBorrowStatus = (id: string) => {
-    setBooks(books.map(book => 
-      book.id === id ? { ...book, isBorrowed: !book.isBorrowed } : book
-    ));
+  const toggleBorrowStatus = async (id: string) => {
+    const book = books.find(b => b.id === id);
+    if (book) await updateDoc(doc(db, 'books', id), { isBorrowed: !book.isBorrowed });
   };
 
-  const toggleReadStatus = (id: string) => {
-    setBooks(books.map(book => 
-      book.id === id ? { ...book, isRead: !book.isRead } : book
-    ));
+  const toggleReadStatus = async (id: string) => {
+    const book = books.find(b => b.id === id);
+    if (book) await updateDoc(doc(db, 'books', id), { isRead: !book.isRead });
   };
 
-  const deleteBook = (id: string) => {
-    setBooks(books.filter(book => book.id !== id));
+  const deleteBook = async (id: string) => {
+    await deleteDoc(doc(db, 'books', id));
   };
 
   const exportLibrary = () => {
@@ -194,12 +224,23 @@ export default function App() {
   };
 
   const sortedFilteredBooks = books
-    .filter(book => 
-      (book.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-       book.author.toLowerCase().includes(searchQuery.toLowerCase())) &&
-      (selectedGenre === null || book.genre === selectedGenre) &&
-      (selectedTag === null || book.tags.includes(selectedTag))
-    )
+    .filter(book => {
+      const matchesSearch = book.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            book.author.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesGenre = selectedGenre === null || book.genre === selectedGenre;
+      const matchesTag = selectedTag === null || book.tags.includes(selectedTag);
+      
+      let matchesFilter = true;
+      if (filter === 'Favorites') matchesFilter = book.rating >= 4.0;
+      else if (filter === 'Recently Added') {
+         const oneWeekAgo = new Date();
+         oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+         matchesFilter = book.createdAt > oneWeekAgo;
+      }
+      else if (filter === 'To Read') matchesFilter = !book.isRead;
+      
+      return matchesSearch && matchesGenre && matchesTag && matchesFilter;
+    })
     .sort((a, b) => {
       switch (sortOption) {
         case 'title-asc': return a.title.localeCompare(b.title);
@@ -218,6 +259,8 @@ export default function App() {
     acc[book.genre] = (acc[book.genre] || 0) + 1; 
     return acc; 
   }, {} as Record<string, number>);
+  const genreDistribution = Object.entries(genreCounts).map(([name, value]) => ({ name, value }));
+  const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#0088FE', '#00C49F'];
   const tagCounts = books.flatMap(b => b.tags).reduce((acc, tag) => {
     acc[tag] = (acc[tag] || 0) + 1;
     return acc;
@@ -233,97 +276,173 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  if (isLoading) {
+    return (
+      <div className={`min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-4 sm:p-8 flex items-center justify-center`}>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-500"
+        >
+          Loading Library...
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <div className={`min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-4 sm:p-8`}>
-      <div className="max-w-4xl mx-auto">
-        <header className="mb-12 text-center relative">
-          <button 
-            onClick={() => setDarkMode(!darkMode)}
-            className="absolute -top-2 right-0 p-3 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 transition-all shadow-sm hover:shadow-md hover:scale-105 active:scale-95 z-50"
-          >
-            {darkMode ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
-          <h1 className="text-4xl font-extrabold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-500 mb-2">Library Catalogue</h1>
-          <p className="text-gray-500 dark:text-gray-400">Manage and track your private collection with ease.</p>
-        </header>
+      <div className="max-w-5xl mx-auto">
+        <header className="mb-16">
+            <div className="flex flex-wrap justify-end gap-2 mb-6">
+               {user ? (
+                 <button onClick={() => signOut(auth)} className="p-3 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 transition-all shadow-sm hover:shadow-md hover:scale-105 active:scale-95">
+                   <LogOut size={20} />
+                 </button>
+               ) : (
+                 <button onClick={async () => {
+                   try {
+                     await signInWithPopup(auth, new GoogleAuthProvider());
+                     setError(null);
+                   } catch (error: any) {
+                     if (error.code !== 'auth/popup-closed-by-user') {
+                       console.error(error);
+                       setError('Failed to sign in.');
+                     }
+                   }
+                 }} className="p-3 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 transition-all shadow-sm hover:shadow-md hover:scale-105 active:scale-95">
+                   <LogIn size={20} />
+                 </button>
+               )}
+              <button 
+                onClick={() => setDarkMode(!darkMode)}
+                className="p-3 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 transition-all shadow-sm hover:shadow-md hover:scale-105 active:scale-95 flex items-center justify-center overflow-hidden"
+              >
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={darkMode ? 'dark' : 'light'}
+                    initial={{ rotate: -90, opacity: 0 }}
+                    animate={{ rotate: 0, opacity: 1 }}
+                    exit={{ rotate: 90, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+                  </motion.div>
+                </AnimatePresence>
+              </button>
+            </div>
+            <div className="text-center">
+              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-500 mb-2">Library Catalogue</h1>
+              <p className="text-gray-500 dark:text-gray-400">Manage and track your private collection with ease.</p>
+            </div>
+          </header>
 
         <form onSubmit={addBook} className="bg-white dark:bg-gray-900 p-6 sm:p-10 rounded-[2rem] shadow-xl shadow-purple-500/10 dark:shadow-purple-500/5 border border-gray-100 dark:border-gray-800 mb-12 grid grid-cols-1 md:grid-cols-2 gap-6 transition-shadow duration-300">
-          {error && <p className="md:col-span-2 text-red-500 text-sm font-medium">{error}</p>}
+          {error && <div className="md:col-span-2 bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 px-4 py-3 rounded-2xl text-sm font-medium">{error}</div>}
           
           <div className="md:col-span-2 flex flex-col sm:flex-row gap-4">
             <input
               type="text"
-              placeholder="ISBN or Title for Auto-Fill"
+              placeholder="ISBN or Title for Quick-Fill"
               value={isbn}
               onChange={(e) => setIsbn(e.target.value)}
               className="flex-1 px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
             />
-            <button type="button" onClick={fetchBookData} disabled={isFetching} className="px-8 py-4 bg-purple-600 text-white rounded-2xl font-semibold hover:bg-purple-700 transition-all disabled:opacity-50">
-              {isFetching ? 'Fetching...' : 'Fetch Data'}
+            <button type="button" onClick={fetchBookData} disabled={isFetching} className="px-8 py-4 bg-purple-600 text-white rounded-2xl font-semibold hover:bg-purple-700 transition-all disabled:opacity-50 active:scale-95">
+              {isFetching ? 'Fetching...' : 'Quick-Fill'}
             </button>
           </div>
           
-          <input
-            type="text"
-            placeholder="Book Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
-          />
-          <input
-            type="text"
-            placeholder="Author"
-            value={author}
-            onChange={(e) => setAuthor(e.target.value)}
-            className="px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
-          />
-          <input
-            type="text"
-            placeholder="Genre"
-            value={genre}
-            onChange={(e) => setGenre(e.target.value)}
-            className="px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
-          />
-          <input
-            type="number"
-            placeholder="Year"
-            value={publicationYear}
-            onChange={(e) => setPublicationYear(e.target.value)}
-            className="px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
-          />
+          <div className="flex flex-col gap-1.5 md:col-span-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 ml-1">Title</label>
+            <input
+              type="text"
+              placeholder="Book Title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
+            />
+          </div>
           
-          <input
-            type="text"
-            placeholder="Image URL"
-            value={image}
-            onChange={(e) => setImage(e.target.value)}
-            className="px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
-          />
-          <input
-            type="number"
-            placeholder="Rating (1-5)"
-            min="1"
-            max="5"
-            step="0.1"
-            value={rating}
-            onChange={(e) => setRating(e.target.value)}
-            className="px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
-          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 ml-1">Author</label>
+            <input
+              type="text"
+              placeholder="Author Name"
+              value={author}
+              onChange={(e) => setAuthor(e.target.value)}
+              className="w-full px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 ml-1">Genre</label>
+            <input
+              type="text"
+              placeholder="Genre"
+              value={genre}
+              onChange={(e) => setGenre(e.target.value)}
+              className="w-full px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 ml-1">Publication Year</label>
+            <input
+              type="number"
+              placeholder="e.g. 2024"
+              value={publicationYear}
+              onChange={(e) => setPublicationYear(e.target.value)}
+              className="w-full px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
+            />
+          </div>
           
-          <input
-            type="text"
-            placeholder="Description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="md:col-span-2 px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
-          />
-          <input
-            type="text"
-            placeholder="Tags (comma separated)"
-            value={tagsInput}
-            onChange={(e) => setTagsInput(e.target.value)}
-            className="md:col-span-2 px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
-          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 ml-1">Rating (1-5)</label>
+            <input
+              type="number"
+              placeholder="Rating"
+              min="1"
+              max="5"
+              step="0.1"
+              value={rating}
+              onChange={(e) => setRating(e.target.value)}
+              className="w-full px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
+            />
+          </div>
+
+          <div className="md:col-span-2 flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 ml-1">Image URL</label>
+            <input
+              type="text"
+              placeholder="https://example.com/cover.jpg"
+              value={image}
+              onChange={(e) => setImage(e.target.value)}
+              className="w-full px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
+            />
+          </div>
+          
+          <div className="md:col-span-2 flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 ml-1">Description</label>
+            <input
+              type="text"
+              placeholder="Brief description..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
+            />
+          </div>
+          <div className="md:col-span-2 flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 ml-1">Tags (Comma separated)</label>
+            <input
+              type="text"
+              placeholder="Sci-Fi, Classics, Adventure"
+              value={tagsInput}
+              onChange={(e) => setTagsInput(e.target.value)}
+              className="w-full px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-400 outline-none transition-all"
+            />
+          </div>
           <button type="submit" className="md:col-span-2 bg-gradient-to-r from-purple-600 to-pink-500 text-white px-8 py-5 rounded-3xl font-semibold text-lg flex items-center justify-center gap-2 hover:from-purple-700 hover:to-pink-600 transition-all shadow-lg shadow-purple-500/20 active:scale-[0.98]">
             <Plus size={22} /> Add Book to Collection
           </button>
@@ -362,25 +481,56 @@ export default function App() {
           </div>
         </div>
 
+        <div className="bg-white dark:bg-gray-900 p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 transition-colors mb-10">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Genre Distribution</h2>
+          <div className="h-64 w-full min-h-[256px]">
+            <ResponsiveContainer width="100%" height={256}>
+              <PieChart>
+                <Pie data={genreDistribution} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                  {genreDistribution.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
         <div className="flex flex-col gap-4 mb-10">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <input
-              type="text"
-              placeholder="Search your collection..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full sm:flex-1 px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-white dark:bg-gray-900 shadow-sm focus:ring-2 focus:ring-purple-400 outline-none transition-all text-gray-900 dark:text-gray-100"
-            />
-            <select 
-              value={sortOption} 
-              onChange={(e) => setSortOption(e.target.value as SortOption)}
-              className="w-full sm:w-auto px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-white dark:bg-gray-900 shadow-sm focus:ring-2 focus:ring-purple-400 outline-none text-gray-700 dark:text-gray-300 transition-all cursor-pointer"
-            >
-              <option value="title-asc">Sort: A-Z</option>
-              <option value="title-desc">Sort: Z-A</option>
-              <option value="author-asc">Sort: Author A-Z</option>
-              <option value="author-desc">Sort: Author Z-A</option>
-            </select>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                placeholder="Search your collection..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full sm:flex-1 px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-white dark:bg-gray-900 shadow-sm focus:ring-2 focus:ring-purple-400 outline-none transition-all text-gray-900 dark:text-gray-100"
+              />
+              <select 
+                value={sortOption} 
+                onChange={(e) => setSortOption(e.target.value as SortOption)}
+                className="w-full sm:w-auto px-6 py-4 border border-gray-200 dark:border-gray-700 rounded-2xl bg-white dark:bg-gray-900 shadow-sm focus:ring-2 focus:ring-purple-400 outline-none text-gray-700 dark:text-gray-300 transition-all cursor-pointer"
+              >
+                <option value="title-asc">Sort: A-Z</option>
+                <option value="title-desc">Sort: Z-A</option>
+                <option value="author-asc">Sort: Author A-Z</option>
+                <option value="author-desc">Sort: Author Z-A</option>
+              </select>
+            </div>
+            
+            <div className="flex flex-wrap gap-2">
+              {(['All', 'Favorites', 'Recently Added', 'To Read'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${filter === f ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20' : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
           
           <div className="space-y-4">
@@ -424,18 +574,38 @@ export default function App() {
 
         <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl shadow-gray-100 dark:shadow-gray-950 border border-gray-100 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
           {sortedFilteredBooks.length === 0 ? (
-            <div className="p-12 text-center text-gray-500 dark:text-gray-400 flex flex-col items-center">
+            <motion.div 
+              initial={{ opacity: 0, y: 50 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+              className="p-12 text-center text-gray-500 dark:text-gray-400 flex flex-col items-center"
+            >
               <BookOpen size={48} className="mb-4 text-purple-300 dark:text-purple-700" />
               <p className="text-lg font-medium">{books.length === 0 ? 'Your library is empty. Add a book to get started!' : 'No books match your search.'}</p>
-            </div>
+              {books.length > 0 && sortedFilteredBooks.length === 0 && (
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedGenre(null);
+                    setSelectedTag(null);
+                    setFilter('All');
+                  }}
+                  className="mt-4 px-6 py-2 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full font-medium hover:bg-purple-200 dark:hover:bg-purple-900/50 transition-colors"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </motion.div>
           ) : (
             <AnimatePresence>
               {sortedFilteredBooks.map(book => (
                 <motion.div 
+                  layout
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  whileHover={{ scale: 1.02 }}
+                  whileHover={{ scale: 1.02, boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)" }}
+                  whileTap={{ scale: 0.98 }}
                   key={book.id} 
                   className="p-4 flex flex-col hover:bg-gradient-to-r hover:from-white hover:to-purple-50 dark:hover:bg-gradient-to-r dark:hover:from-gray-900 dark:hover:to-gray-800 transition-colors"
                 >
@@ -520,14 +690,14 @@ export default function App() {
               <div className="flex gap-3 justify-end">
                 <button onClick={() => setBookToDelete(null)} className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">Cancel</button>
                 <button 
-                  onClick={() => {
-                    setBooks(books.filter(b => b.id !== bookToDelete.id));
-                    setBookToDelete(null);
-                  }}
-                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700"
-                >
-                  Delete
-                </button>
+                onClick={() => {
+                  deleteBook(bookToDelete.id);
+                  setBookToDelete(null);
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700"
+              >
+                Delete
+              </button>
               </div>
             </div>
           </div>

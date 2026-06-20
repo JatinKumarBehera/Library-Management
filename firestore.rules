@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    function isValidBook(book) {
+      return book.userId is string &&
+             book.title is string && book.title.size() <= 200 &&
+             book.author is string && book.author.size() <= 200 &&
+             book.createdAt is timestamp &&
+             book.updatedAt is timestamp;
+    }
+
+    // --- Safety Net ---
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Collections ---
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /books/{bookId} {
+      allow list, get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+                    && isValidBook(incoming()) 
+                    && incoming().userId == request.auth.uid
+                    && incoming().createdAt == request.time
+                    && incoming().updatedAt == request.time;
+      
+      allow update: if isSignedIn() 
+                    && resource.data.userId == request.auth.uid
+                    && incoming().userId == request.auth.uid
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().updatedAt == request.time;
+                    
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+  }
+}
